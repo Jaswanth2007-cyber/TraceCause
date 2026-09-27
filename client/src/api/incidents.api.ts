@@ -1,6 +1,22 @@
 import { Incident, InvestigationResponse, RecalledMemoryItem, ResolutionResult, SystemHealth } from '../types';
 
-const API_BASE = '/api';
+const getApiBase = (): string => {
+  const envUrl = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_BACKEND_URL;
+  if (envUrl && typeof envUrl === 'string' && envUrl.trim().length > 0) {
+    const trimmed = envUrl.trim().replace(/\/+$/, '');
+    return trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`;
+  }
+
+  // In production builds, default directly to the primary deployed backend URL
+  if (import.meta.env.PROD) {
+    return 'https://trace-cause-server.vercel.app/api';
+  }
+
+  // In local development, use relative path which is proxied by Vite dev server
+  return '/api';
+};
+
+const API_BASE = getApiBase();
 
 export const api = {
   /**
