@@ -1,6 +1,7 @@
 import { hindsightService, RecalledMemoryItem } from './hindsight.service.js';
 import { groqService, StructuredInvestigationResult } from './groq.service.js';
 import { db } from '../db/index.js';
+import { findIncidentOrHydrate } from '../routes/incidents.routes.js';
 
 export interface InvestigationResponse {
   incidentId: string;
@@ -16,14 +17,8 @@ export interface InvestigationResponse {
 
 export class AgentService {
   async investigateIncident(incidentId: string): Promise<InvestigationResponse> {
-    // 1. Fetch incident from SQLite
-    const incidentRow: any = db
-      .prepare(
-        `SELECT id, incident_number, title, service, severity, environment, description, symptoms, status, created_at 
-         FROM incidents 
-         WHERE id = ? OR incident_number = ?`
-      )
-      .get([incidentId, incidentId]);
+    // 1. Fetch incident with automatic stateless serverless hydration
+    const incidentRow: any = findIncidentOrHydrate(incidentId);
 
     if (!incidentRow) {
       throw new Error(`Incident with ID or Number '${incidentId}' not found.`);
@@ -98,9 +93,7 @@ export class AgentService {
       result: 'SUCCESS' | 'FAILED' | 'MITIGATED' | 'PARTIAL';
     }
   ): Promise<{ success: boolean; incident: any; resolution: any; memoryRetained: any }> {
-    const incidentRow: any = db
-      .prepare(`SELECT * FROM incidents WHERE id = ? OR incident_number = ?`)
-      .get([incidentId, incidentId]);
+    const incidentRow: any = findIncidentOrHydrate(incidentId);
 
     if (!incidentRow) {
       throw new Error(`Incident '${incidentId}' not found.`);
@@ -161,9 +154,7 @@ Postmortem Lesson: Verified resolution for ${incidentRow.service}. Result record
   }
 
   async getIncidentMemories(incidentId: string): Promise<{ incident: any; memories: RecalledMemoryItem[] }> {
-    const incidentRow: any = db
-      .prepare(`SELECT * FROM incidents WHERE id = ? OR incident_number = ?`)
-      .get([incidentId, incidentId]);
+    const incidentRow: any = findIncidentOrHydrate(incidentId);
 
     if (!incidentRow) {
       throw new Error(`Incident '${incidentId}' not found.`);

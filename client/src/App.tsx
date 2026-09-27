@@ -78,6 +78,7 @@ export function App() {
 
   const handleCreateIncident = async (payload: any) => {
     const created = await api.createIncident(payload);
+    console.log('[TraceCause] Created incident:', created);
     await fetchData();
     setSelectedIncident(created);
 
@@ -91,6 +92,7 @@ export function App() {
   };
 
   const handleInvestigate = async (id: string): Promise<InvestigationResponse> => {
+    console.log('[TraceCause] Investigation ID:', id);
     const res = await api.investigateIncident(id);
     setActiveInvestigationData((prev) => ({ ...prev, [id]: res }));
     await fetchData();
@@ -108,6 +110,7 @@ export function App() {
     id: string,
     payload: { root_cause: string; resolution: string; result: ResolutionResult }
   ) => {
+    console.log('[TraceCause] Resolve & Learn ID:', id);
     const res = await api.resolveAndLearn(id, payload);
     await fetchData();
     setDemoStage(6); // Hindsight retain succeeded -> Stage 6 confirmed
