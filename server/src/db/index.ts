@@ -1,5 +1,65 @@
 import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
+import { createRequire } from 'module';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 import { SEED_DATA } from './seed-data.js';
+
+const nodeRequire = createRequire(import.meta.url);
+
+/**
+ * Resolve the WebAssembly binary path for sql.js in a serverless-safe,
+ * package-relative manner without hardcoding local directories.
+ */
+function resolveSqlJsWasm(): { wasmPath: string; wasmBinary?: Buffer } {
+  let wasmPath: string | null = null;
+
+  // 1. Try package-relative resolution via require.resolve
+  try {
+    const resolved = nodeRequire.resolve('sql.js/dist/sql-wasm.wasm');
+    if (fs.existsSync(resolved)) {
+      wasmPath = resolved;
+    }
+  } catch (e) {
+    // Continue to candidate searches
+  }
+
+  // 2. Candidate fallback paths for Vercel Serverless / local / monorepo environments
+  if (!wasmPath) {
+    const currentDir = path.dirname(fileURLToPath(import.meta.url));
+    const candidates = [
+      path.join(process.cwd(), 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm'),
+      path.join(process.cwd(), '..', 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm'),
+      path.join(currentDir, 'sql-wasm.wasm'),
+      path.join(currentDir, '..', 'sql-wasm.wasm'),
+      path.join(currentDir, '..', '..', 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm'),
+      path.join('/var/task', 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm'),
+      path.join('/var/task', 'server', 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm'),
+    ];
+
+    for (const candidate of candidates) {
+      try {
+        if (fs.existsSync(candidate)) {
+          wasmPath = candidate;
+          break;
+        }
+      } catch {}
+    }
+  }
+
+  if (!wasmPath) {
+    wasmPath = 'node_modules/sql.js/dist/sql-wasm.wasm';
+  }
+
+  let wasmBinary: Buffer | undefined;
+  try {
+    if (fs.existsSync(wasmPath)) {
+      wasmBinary = fs.readFileSync(wasmPath);
+    }
+  } catch {}
+
+  return { wasmPath, wasmBinary };
+}
 
 class SQLiteWrapper {
   private db: SqlJsDatabase | null = null;
@@ -12,8 +72,23 @@ class SQLiteWrapper {
     if (this.initPromise) return this.initPromise;
 
     this.initPromise = (async () => {
-      this.SQL = await initSqlJs();
-      // Initialize pure in-memory SQLite database (zero filesystem I/O, 100% Vercel safe)
+      const { wasmPath, wasmBinary } = resolveSqlJsWasm();
+
+      const config: any = {
+        locateFile: (filename: string) => {
+          if (filename.endsWith('.wasm')) {
+            return wasmPath;
+          }
+          return filename;
+        },
+      };
+
+      if (wasmBinary) {
+        config.wasmBinary = wasmBinary;
+      }
+
+      this.SQL = await initSqlJs(config);
+      // Initialize pure in-memory SQLite database (zero filesystem database files, 100% Vercel safe)
       this.db = new this.SQL.Database();
       this.createTables();
       this.populateDefaultSeed();

@@ -1,5 +1,19 @@
 {
   "version": 2,
+  "functions": {
+    "api/**/*.ts": {
+      "includeFiles": "node_modules/sql.js/dist/**"
+    },
+    "api/*.ts": {
+      "includeFiles": "node_modules/sql.js/dist/**"
+    },
+    "api/index.ts": {
+      "includeFiles": "node_modules/sql.js/dist/**"
+    },
+    "src/index.ts": {
+      "includeFiles": "node_modules/sql.js/dist/**"
+    }
+  },
   "rewrites": [
     {
       "source": "/(.*)",
