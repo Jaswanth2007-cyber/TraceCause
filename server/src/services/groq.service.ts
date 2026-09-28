@@ -184,6 +184,17 @@ Respond with ONLY valid JSON matching this schema:
 
         const rawContent = chatCompletion.choices[0]?.message?.content || '{}';
         const parsed = JSON.parse(rawContent) as StructuredInvestigationResult;
+
+        if (parsed?.historicalMemory?.recalledIncidents && Array.isArray(parsed.historicalMemory.recalledIncidents)) {
+          const seen = new Set<string>();
+          parsed.historicalMemory.recalledIncidents = parsed.historicalMemory.recalledIncidents.filter((item) => {
+            const num = (item.incidentNumber || '').toUpperCase().trim();
+            if (num && seen.has(num)) return false;
+            if (num) seen.add(num);
+            return true;
+          });
+        }
+
         return parsed;
       } catch (err: any) {
         console.error('[Groq API Error, using grounded fallback engine]:', err.message);
@@ -220,12 +231,22 @@ Respond with ONLY valid JSON matching this schema:
       incident.title.toLowerCase().includes('504') ||
       incident.symptoms.some((s) => s.toLowerCase().includes('pool') || s.toLowerCase().includes('connection'));
 
-    const formattedRecalled = recalledMemories.map((m) => {
+    const seenIncidents = new Set<string>();
+    const formattedRecalled: any[] = [];
+
+    for (const m of recalledMemories) {
       const isFailed = m.content.includes('FAILED ATTEMPT');
       const isProven = m.content.includes('PROVEN SUCCESS') || m.content.includes('SUCCESS');
       const isNewlyLearned = m.isNewlyLearned || m.content.includes('INC-2024-091') || m.incidentNumber === 'INC-2024-091';
-      const incMatch = m.content.match(/\[(INC-\d+-\d+)\]/) || m.content.match(/(INC-\d{4}-\d{3})/);
-      const incNumber = m.incidentNumber || (incMatch ? incMatch[1] : 'INC-HISTORICAL');
+      const incMatch = m.content.match(/\[(INC-\d+-\d+)\]/) || m.content.match(/(INC-\d{4}-\d{3})/i);
+      const incNumber = m.incidentNumber || (incMatch ? incMatch[1].toUpperCase() : 'INC-HISTORICAL');
+
+      if (incNumber && incNumber !== 'INC-HISTORICAL' && seenIncidents.has(incNumber)) {
+        continue;
+      }
+      if (incNumber && incNumber !== 'INC-HISTORICAL') {
+        seenIncidents.add(incNumber);
+      }
 
       let provRes = isProven
         ? 'Proven Fix: Configured aggressive idle connection reaping (idleTimeoutMillis: 10000) and wrapped transactions in try-finally client.release().'
@@ -235,7 +256,7 @@ Respond with ONLY valid JSON matching this schema:
         provRes = 'Proven Fix (INC-2024-091): Configured aggressive connection reaping with idleTimeoutMillis=10000, connectionTimeoutMillis=2000, and wrapped checkout transaction logic in try-finally with explicit client.release(). Zero connection pool starvation observed since.';
       }
 
-      return {
+      formattedRecalled.push({
         incidentNumber: incNumber,
         service: isNewlyLearned ? 'payment-api' : incident.service,
         relevanceScore: m.relevance || 0.85,
@@ -251,8 +272,8 @@ Respond with ONLY valid JSON matching this schema:
           ? 'Related memory from a recently resolved incident. The previous incident was resolved by fixing connection release/cleanup and configuring connection timeout/reaping behavior.'
           : (m.whyRecalled || 'Historical pattern match.'),
         isNewlyLearned,
-      };
-    });
+      });
+    }
 
     if (isConnPoolCluster) {
       return {

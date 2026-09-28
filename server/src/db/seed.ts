@@ -1,8 +1,8 @@
 import { db, initializeDatabase } from './index.js';
 import { hindsightService } from '../services/hindsight.service.js';
-import { SEED_DATA, SeedIncident } from './seed-data.js';
+import { SEED_DATA, type SeedIncident } from './seed-data.js';
 
-export { SEED_DATA, SeedIncident };
+export { SEED_DATA, type SeedIncident };
 
 export async function runSeed(): Promise<{ inserted: number; retainedMemories: number }> {
   await initializeDatabase();

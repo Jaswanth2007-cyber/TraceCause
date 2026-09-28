@@ -126,16 +126,45 @@ export class HindsightService {
 
             score = Math.max(0.1, Math.min(0.98, Number(score.toFixed(2))));
 
-            // Extract incident number if present in text or entities
-            const incMatch = rawText.match(/INC-\d{4}-\d{3}/) || (item.entities || []).find((e: string) => /INC-\d{4}-\d{3}/.test(e));
-            const incidentNumber = incMatch ? (Array.isArray(incMatch) ? incMatch[0] : incMatch) : undefined;
+            // Extract incident number with authoritative priority:
+            // 1. item.metadata?.incident_number (authoritative from retention)
+            // 2. Regex match in rawText: /INC-\d{4}-\d{3}/i
+            // 3. item.metadata?.incident_id if formatted like INC-xxxx-xxx
+            // 4. item.entities match: /INC-\d{4}-\d{3}/i
+            let incidentNumber: string | undefined = undefined;
+
+            if (item.metadata?.incident_number && /INC-\d{4}-\d{3}/i.test(String(item.metadata.incident_number))) {
+              const match = String(item.metadata.incident_number).match(/INC-\d{4}-\d{3}/i);
+              incidentNumber = match ? match[0].toUpperCase() : undefined;
+            }
+
+            if (!incidentNumber) {
+              const textMatch = rawText.match(/INC-\d{4}-\d{3}/i);
+              if (textMatch) {
+                incidentNumber = textMatch[0].toUpperCase();
+              }
+            }
+
+            if (!incidentNumber && item.metadata?.incident_id && /INC-\d{4}-\d{3}/i.test(String(item.metadata.incident_id))) {
+              const match = String(item.metadata.incident_id).match(/INC-\d{4}-\d{3}/i);
+              incidentNumber = match ? match[0].toUpperCase() : undefined;
+            }
+
+            if (!incidentNumber && Array.isArray(item.entities)) {
+              const entityMatch = item.entities.find((e: string) => /INC-\d{4}-\d{3}/i.test(e));
+              if (entityMatch) {
+                const match = entityMatch.match(/INC-\d{4}-\d{3}/i);
+                incidentNumber = match ? match[0].toUpperCase() : undefined;
+              }
+            }
 
             const isNewlyLearned = Boolean(
+              incidentNumber === 'INC-2024-091' ||
+              item.metadata?.incident_number === 'INC-2024-091' ||
               rawText.includes('INC-2024-091') ||
               rawText.includes('postmortem-learning') ||
               item.tags?.includes('postmortem-learning') ||
-              item.metadata?.incident_number === 'INC-2024-091' ||
-              incidentNumber === 'INC-2024-091'
+              (Array.isArray(item.metadata?.tags) && item.metadata.tags.includes('postmortem-learning'))
             );
 
             let whyReason = this.generateDynamicRecallReason(rawText, options.service || '', query, item.entities || []);
@@ -158,10 +187,7 @@ export class HindsightService {
             };
           });
 
-          // Sort by relevance score descending and return top matches
-          return rawItems
-            .sort((a, b) => (b.relevance || 0) - (a.relevance || 0))
-            .slice(0, limit);
+          return this.deduplicateMemories(rawItems, limit);
         }
       } catch (err: any) {
         console.error('[Hindsight Cloud] Recall error:', err.message);
@@ -332,7 +358,67 @@ Resolution: ${row.resolution}`;
       };
     });
 
-    return scored.sort((a, b) => (b.relevance || 0) - (a.relevance || 0)).slice(0, limit);
+    return this.deduplicateMemories(scored, limit);
+  }
+
+  /**
+   * Deduplicate memories by a stable identifier (incidentNumber or unique ID/hash)
+   * while preserving the highest relevance score and newly learned indicators.
+   */
+  private deduplicateMemories(items: RecalledMemoryItem[], limit: number): RecalledMemoryItem[] {
+    const dedupMap = new Map<string, RecalledMemoryItem>();
+
+    for (const item of items) {
+      const stableKey =
+        item.incidentNumber ||
+        (item.metadata?.incident_number ? String(item.metadata.incident_number).toUpperCase() : undefined) ||
+        (item.metadata?.incident_id ? String(item.metadata.incident_id).toUpperCase() : undefined) ||
+        item.id;
+
+      if (!dedupMap.has(stableKey)) {
+        dedupMap.set(stableKey, { ...item });
+      } else {
+        const existing = dedupMap.get(stableKey)!;
+        const maxScore = Math.max(existing.relevance || 0, item.relevance || 0);
+        const isNewlyLearned = Boolean(existing.isNewlyLearned || item.isNewlyLearned);
+
+        const bestContent =
+          item.content && item.content.length > (existing.content?.length || 0)
+            ? item.content
+            : existing.content;
+
+        const mergedTags = Array.from(new Set([...(existing.tags || []), ...(item.tags || [])]));
+        const mergedEntities = Array.from(new Set([...(existing.entities || []), ...(item.entities || [])]));
+
+        let whyReason = existing.whyRecalled;
+        if (isNewlyLearned) {
+          whyReason =
+            existing.whyRecalled ||
+            item.whyRecalled ||
+            'Related memory from a recently resolved incident (INC-2024-091). The previous incident was resolved by fixing connection release/cleanup and configuring connection timeout/reaping behavior.';
+        } else if (item.whyRecalled && item.whyRecalled.length > (existing.whyRecalled?.length || 0)) {
+          whyReason = item.whyRecalled;
+        }
+
+        dedupMap.set(stableKey, {
+          ...existing,
+          id: existing.id || item.id,
+          incidentNumber: existing.incidentNumber || item.incidentNumber,
+          content: bestContent,
+          relevance: maxScore,
+          relevanceLabel: this.getRelevanceTier(maxScore),
+          isNewlyLearned,
+          whyRecalled: whyReason,
+          tags: mergedTags,
+          entities: mergedEntities,
+          metadata: { ...existing.metadata, ...item.metadata },
+        });
+      }
+    }
+
+    return Array.from(dedupMap.values())
+      .sort((a, b) => (b.relevance || 0) - (a.relevance || 0))
+      .slice(0, limit);
   }
 }
 

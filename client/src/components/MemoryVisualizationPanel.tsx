@@ -15,6 +15,34 @@ export const MemoryVisualizationPanel: React.FC<MemoryVisualizationPanelProps> =
 }) => {
   const [expandedIndex, setExpandedIndex] = useState<number | null>(0);
 
+  // Client-side deduplication safeguard: each historical memory / incident appears only once
+  const displayedMemories = React.useMemo(() => {
+    const map = new Map<string, RecalledMemoryItem>();
+    for (const mem of memories || []) {
+      const key =
+        mem.incidentNumber ||
+        (mem.metadata?.incident_number ? String(mem.metadata.incident_number).toUpperCase() : undefined) ||
+        (mem.metadata?.incident_id ? String(mem.metadata.incident_id).toUpperCase() : undefined) ||
+        mem.id;
+
+      if (!map.has(key)) {
+        map.set(key, { ...mem });
+      } else {
+        const existing = map.get(key)!;
+        const higherScore = Math.max(existing.relevance || 0, mem.relevance || 0);
+        map.set(key, {
+          ...existing,
+          relevance: higherScore,
+          relevanceLabel: existing.relevanceLabel || mem.relevanceLabel,
+          isNewlyLearned: Boolean(existing.isNewlyLearned || mem.isNewlyLearned),
+          whyRecalled: existing.whyRecalled || mem.whyRecalled,
+          content: mem.content && mem.content.length > (existing.content?.length || 0) ? mem.content : existing.content,
+        });
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => (b.relevance || 0) - (a.relevance || 0));
+  }, [memories]);
+
   const getTierBadge = (score: number, explicitLabel?: string) => {
     const label = explicitLabel || (score >= 0.85 ? 'High Match' : score >= 0.70 ? 'Relevant' : score >= 0.50 ? 'Related Pattern' : 'Weak Match');
     switch (label) {
@@ -55,7 +83,7 @@ export const MemoryVisualizationPanel: React.FC<MemoryVisualizationPanelProps> =
                 Hindsight Memory Recall Graph
               </h3>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-700/60">
-                {memories.length} Memories Activated
+                {displayedMemories.length} Memories Activated
               </span>
             </div>
             <p className="text-xs text-slate-400">
@@ -73,13 +101,13 @@ export const MemoryVisualizationPanel: React.FC<MemoryVisualizationPanelProps> =
       </div>
 
       {/* Memory Cards / Graph Representation */}
-      {memories.length === 0 ? (
+      {displayedMemories.length === 0 ? (
         <div className="py-8 text-center text-xs text-slate-400">
           No historical memories recalled for this query.
         </div>
       ) : (
         <div className="mt-4 space-y-3">
-          {memories.map((mem, idx) => {
+          {displayedMemories.map((mem, idx) => {
             const isExpanded = expandedIndex === idx;
             const score = mem.relevance || 0.75;
             const scorePercent = Math.round(score * 100);

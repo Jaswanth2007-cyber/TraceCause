@@ -27,6 +27,27 @@ export const EvidenceSeparationCard: React.FC<EvidenceSeparationCardProps> = ({
 
   const { currentFacts, historicalMemory, aiInference } = findings;
 
+  // Deduplicate historical postmortems by incident number
+  const uniqueRecalledIncidents = React.useMemo(() => {
+    const map = new Map<string, any>();
+    for (const inc of historicalMemory?.recalledIncidents || []) {
+      const key = (inc.incidentNumber || (inc as any).id || inc.similaritySummary || JSON.stringify(inc)).toUpperCase().trim();
+      if (!map.has(key)) {
+        map.set(key, { ...inc });
+      } else {
+        const existing = map.get(key)!;
+        const higherScore = Math.max(existing.relevanceScore || 0, inc.relevanceScore || 0);
+        map.set(key, {
+          ...existing,
+          relevanceScore: higherScore,
+          isNewlyLearned: Boolean(existing.isNewlyLearned || inc.isNewlyLearned),
+          similaritySummary: inc.similaritySummary && inc.similaritySummary.length > (existing.similaritySummary?.length || 0) ? inc.similaritySummary : existing.similaritySummary,
+        });
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0));
+  }, [historicalMemory?.recalledIncidents]);
+
   return (
     <div className="w-full space-y-4">
       {/* Evidence Separation Header */}
@@ -195,10 +216,10 @@ export const EvidenceSeparationCard: React.FC<EvidenceSeparationCardProps> = ({
               {/* Recalled Incidents */}
               <div>
                 <span className="text-slate-400 font-semibold uppercase tracking-wider text-[10px] block mb-1">
-                  Matched Historical Postmortems ({historicalMemory.recalledIncidents.length})
+                  Matched Historical Postmortems ({uniqueRecalledIncidents.length})
                 </span>
                 <div className="space-y-2">
-                  {historicalMemory.recalledIncidents.map((mem, idx) => (
+                  {uniqueRecalledIncidents.map((mem, idx) => (
                     <div
                       key={idx}
                       className={`p-3 rounded-lg border transition-colors ${
